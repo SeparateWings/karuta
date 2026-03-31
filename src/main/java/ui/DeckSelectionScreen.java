@@ -1,0 +1,382 @@
+package ui;
+
+import config.ConfigManager;
+import javafx.collections.FXCollections;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.Scene;
+import javafx.scene.control.Button;
+import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
+import javafx.scene.control.Separator;
+import javafx.scene.control.Spinner;
+import javafx.scene.control.SpinnerValueFactory;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
+import model.Card;
+import model.Deck;
+import model.Song;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+
+public class DeckSelectionScreen {
+    private final MainWindow mainWindow;
+    private final ConfigManager configManager;
+    private final List<File> deckFiles;
+
+    private Scene scene;
+    private ListView<String> deckListView;
+    private Spinner<Integer> roundsSpinner;
+    private Label deckNameLabel;
+    private Label deckMetaLabel;
+    private Label previewTitleLabel;
+    private Label previewSongsLabel;
+    private Label emptyPreviewLabel;
+    private ImageView previewImageView;
+    private ListView<String> previewCardListView;
+
+    public DeckSelectionScreen(MainWindow mainWindow) {
+        this.mainWindow = mainWindow;
+        this.configManager = mainWindow.getConfigManager();
+        this.deckFiles = new ArrayList<>();
+        createUI();
+    }
+
+    private void createUI() {
+        BorderPane root = new BorderPane();
+        root.setPadding(new Insets(28));
+        root.setStyle(
+            "-fx-background-color: linear-gradient(to bottom right, #f7efe4, #f2f5fb);" +
+            "-fx-font-family: 'Segoe UI';"
+        );
+
+        VBox hero = new VBox(8);
+        hero.setPadding(new Insets(0, 0, 24, 0));
+
+        Label titleLabel = new Label("Karuta Jukebox");
+        titleLabel.setStyle("-fx-font-size: 36; -fx-font-weight: bold; -fx-text-fill: #1d2a44;");
+
+        Label subtitleLabel = new Label("Choose a deck, preview its art, then start a round set.");
+        subtitleLabel.setStyle("-fx-font-size: 15; -fx-text-fill: #6d7686;");
+
+        hero.getChildren().addAll(titleLabel, subtitleLabel);
+        root.setTop(hero);
+
+        HBox content = new HBox(24);
+
+        VBox leftPanel = new VBox(18);
+        leftPanel.setPrefWidth(360);
+        leftPanel.setPadding(new Insets(26));
+        leftPanel.setStyle(createPanelStyle("#fffaf3"));
+
+        Label deckLabel = new Label("Available Decks");
+        deckLabel.setStyle("-fx-font-size: 18; -fx-font-weight: bold; -fx-text-fill: #24324a;");
+
+        Label deckHintLabel = new Label("Select a deck on the left. The right side shows art and song preview.");
+        deckHintLabel.setWrapText(true);
+        deckHintLabel.setStyle("-fx-font-size: 13; -fx-text-fill: #7a8598;");
+
+        deckListView = new ListView<>();
+        deckListView.setPrefHeight(320);
+        deckListView.setStyle(
+            "-fx-background-color: transparent;" +
+            "-fx-control-inner-background: #fffdf8;" +
+            "-fx-background-insets: 0;" +
+            "-fx-border-color: #eadfca;" +
+            "-fx-border-radius: 16;" +
+            "-fx-background-radius: 16;" +
+            "-fx-padding: 8;"
+        );
+        loadAvailableDecks();
+        deckListView.getSelectionModel().selectedIndexProperty().addListener((obs, oldValue, newValue) ->
+            updateDeckPreview(newValue.intValue())
+        );
+
+        VBox roundsCard = new VBox(10);
+        roundsCard.setPadding(new Insets(18));
+        roundsCard.setStyle(createInsetCardStyle());
+
+        Label roundsLabel = new Label("Match Setup");
+        roundsLabel.setStyle("-fx-font-size: 16; -fx-font-weight: bold; -fx-text-fill: #24324a;");
+
+        Label roundsHintLabel = new Label("Pick how many rounds this session should run.");
+        roundsHintLabel.setWrapText(true);
+        roundsHintLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #7a8598;");
+
+        roundsSpinner = new Spinner<>(new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 100, 10));
+        roundsSpinner.setStyle("-fx-font-size: 14;");
+        roundsSpinner.setPrefWidth(160);
+
+        HBox roundsBox = new HBox(12, new Label("Rounds"), roundsSpinner);
+        roundsBox.setAlignment(Pos.CENTER_LEFT);
+
+        Button startButton = createButton("Start", "#2f7d4a");
+        startButton.setOnAction(e -> startGame());
+
+        Button exitButton = new Button("Exit");
+        exitButton.setStyle(createSecondaryButtonStyle());
+        exitButton.setOnAction(e -> System.exit(0));
+
+        HBox buttonBox = new HBox(15, startButton, exitButton);
+        buttonBox.setAlignment(Pos.CENTER_LEFT);
+
+        roundsCard.getChildren().addAll(roundsLabel, roundsHintLabel, roundsBox, buttonBox);
+        leftPanel.getChildren().addAll(deckLabel, deckHintLabel, deckListView, roundsCard);
+
+        VBox rightPanel = new VBox(18);
+        rightPanel.setPadding(new Insets(26));
+        rightPanel.setStyle(createPanelStyle("#f8fbff"));
+
+        deckNameLabel = new Label("No deck selected");
+        deckNameLabel.setStyle("-fx-font-size: 24; -fx-font-weight: bold; -fx-text-fill: #1d2a44;");
+
+        deckMetaLabel = new Label("Cards 0 | Songs 0");
+        deckMetaLabel.setStyle("-fx-font-size: 13; -fx-text-fill: #6d7686;");
+
+        HBox previewContent = new HBox(20);
+
+        VBox artworkCard = new VBox(12);
+        artworkCard.setAlignment(Pos.TOP_CENTER);
+        artworkCard.setPadding(new Insets(18));
+        artworkCard.setPrefWidth(320);
+        artworkCard.setStyle(createInsetCardStyle());
+
+        previewImageView = new ImageView();
+        previewImageView.setFitWidth(240);
+        previewImageView.setFitHeight(320);
+        previewImageView.setPreserveRatio(true);
+        previewImageView.setSmooth(true);
+
+        emptyPreviewLabel = new Label("Artwork preview area");
+        emptyPreviewLabel.setWrapText(true);
+        emptyPreviewLabel.setMaxWidth(220);
+        emptyPreviewLabel.setAlignment(Pos.CENTER);
+        emptyPreviewLabel.setStyle("-fx-font-size: 14; -fx-text-fill: #7a8598;");
+
+        previewTitleLabel = new Label("Pick a deck");
+        previewTitleLabel.setWrapText(true);
+        previewTitleLabel.setAlignment(Pos.CENTER);
+        previewTitleLabel.setStyle("-fx-font-size: 18; -fx-font-weight: bold; -fx-text-fill: #24324a;");
+
+        previewSongsLabel = new Label("Song names will appear here.");
+        previewSongsLabel.setWrapText(true);
+        previewSongsLabel.setMaxWidth(240);
+        previewSongsLabel.setAlignment(Pos.CENTER);
+        previewSongsLabel.setStyle("-fx-font-size: 13; -fx-text-fill: #6d7686;");
+
+        artworkCard.getChildren().addAll(previewImageView, emptyPreviewLabel, previewTitleLabel, previewSongsLabel);
+
+        VBox listCard = new VBox(12);
+        listCard.setPadding(new Insets(18));
+        listCard.setStyle(createInsetCardStyle());
+        HBox.setHgrow(listCard, Priority.ALWAYS);
+
+        Label listTitle = new Label("Card Preview");
+        listTitle.setStyle("-fx-font-size: 16; -fx-font-weight: bold; -fx-text-fill: #24324a;");
+
+        Label listHint = new Label("This section leaves room for card art, titles, and quick song counts.");
+        listHint.setWrapText(true);
+        listHint.setStyle("-fx-font-size: 12; -fx-text-fill: #7a8598;");
+
+        previewCardListView = new ListView<>();
+        previewCardListView.setPrefHeight(360);
+        previewCardListView.setStyle(
+            "-fx-background-color: transparent;" +
+            "-fx-control-inner-background: white;" +
+            "-fx-background-insets: 0;" +
+            "-fx-border-color: #dfe6f2;" +
+            "-fx-border-radius: 14;" +
+            "-fx-background-radius: 14;" +
+            "-fx-padding: 8;"
+        );
+
+        listCard.getChildren().addAll(listTitle, listHint, previewCardListView);
+        previewContent.getChildren().addAll(artworkCard, listCard);
+
+        Region contentSpacer = new Region();
+        VBox.setVgrow(contentSpacer, Priority.ALWAYS);
+        rightPanel.getChildren().addAll(deckNameLabel, deckMetaLabel, new Separator(), previewContent, contentSpacer);
+
+        content.getChildren().addAll(leftPanel, rightPanel);
+        HBox.setHgrow(rightPanel, Priority.ALWAYS);
+        root.setCenter(content);
+
+        scene = new Scene(root, 1120, 720);
+        updateDeckPreview(deckListView.getSelectionModel().getSelectedIndex());
+    }
+
+    private void loadAvailableDecks() {
+        File decksFolder = new File(configManager.getDefaultDeck()).getParentFile();
+        if (decksFolder != null && decksFolder.exists() && decksFolder.isDirectory()) {
+            File[] files = decksFolder.listFiles((dir, name) -> name.endsWith(".csv"));
+            if (files != null) {
+                for (File file : files) {
+                    deckFiles.add(file);
+                    deckListView.getItems().add(file.getName().replace(".csv", ""));
+                }
+            }
+        }
+
+        if (deckListView.getItems().isEmpty()) {
+            deckListView.getItems().add("No deck files found");
+            deckListView.setDisable(true);
+        } else {
+            deckListView.getSelectionModel().selectFirst();
+        }
+    }
+
+    private void updateDeckPreview(int selectedIndex) {
+        if (selectedIndex < 0 || selectedIndex >= deckFiles.size()) {
+            deckNameLabel.setText("No deck selected");
+            deckMetaLabel.setText("Cards 0 | Songs 0");
+            previewTitleLabel.setText("Pick a deck");
+            previewSongsLabel.setText("Song names will appear here.");
+            previewImageView.setImage(null);
+            emptyPreviewLabel.setVisible(true);
+            previewCardListView.setItems(FXCollections.observableArrayList());
+            return;
+        }
+
+        try {
+            Deck deck = configManager.loadDeck(deckFiles.get(selectedIndex).getAbsolutePath());
+            int totalSongs = deck.getCards().stream().mapToInt(Card::getSongCount).sum();
+            deckNameLabel.setText(deck.getDeckName());
+            deckMetaLabel.setText(String.format("Cards %d | Songs %d", deck.getCardCount(), totalSongs));
+
+            Card heroCard = deck.getCards().isEmpty() ? null : deck.getCards().get(0);
+            if (heroCard != null) {
+                previewTitleLabel.setText(heroCard.getWorkName());
+                previewSongsLabel.setText(buildSongPreview(heroCard));
+                updatePreviewImage(heroCard);
+            } else {
+                previewTitleLabel.setText("Deck has no playable cards");
+                previewSongsLabel.setText("Check the csv rows and audio assets.");
+                previewImageView.setImage(null);
+                emptyPreviewLabel.setVisible(true);
+            }
+
+            previewCardListView.setItems(FXCollections.observableArrayList(
+                deck.getCards().stream()
+                    .limit(12)
+                    .map(this::buildCardListLabel)
+                    .collect(Collectors.toList())
+            ));
+        } catch (Exception e) {
+            deckNameLabel.setText("Preview failed");
+            deckMetaLabel.setText(e.getMessage());
+            previewTitleLabel.setText("Unable to read deck");
+            previewSongsLabel.setText("Check config paths and deck assets.");
+            previewImageView.setImage(null);
+            emptyPreviewLabel.setVisible(true);
+            previewCardListView.setItems(FXCollections.observableArrayList());
+        }
+    }
+
+    private void updatePreviewImage(Card card) {
+        if (card == null || card.getImageFile() == null || !card.getImageFile().exists()) {
+            previewImageView.setImage(null);
+            emptyPreviewLabel.setVisible(true);
+            return;
+        }
+
+        try (FileInputStream inputStream = new FileInputStream(card.getImageFile())) {
+            previewImageView.setImage(new Image(inputStream));
+            emptyPreviewLabel.setVisible(false);
+        } catch (Exception e) {
+            previewImageView.setImage(null);
+            emptyPreviewLabel.setVisible(true);
+        }
+    }
+
+    private String buildSongPreview(Card card) {
+        List<Song> songs = card.getSongs();
+        if (songs.isEmpty()) {
+            return "No songs linked to this card.";
+        }
+
+        return songs.stream()
+            .limit(3)
+            .map(Song::getDisplayName)
+            .collect(Collectors.joining(" / "));
+    }
+
+    private String buildCardListLabel(Card card) {
+        String firstSong = card.getSongs().isEmpty()
+            ? "No song"
+            : card.getSongs().get(0).getDisplayName();
+        return card.getWorkName() + "  |  " + firstSong;
+    }
+
+    private void startGame() {
+        int selectedIndex = deckListView.getSelectionModel().getSelectedIndex();
+        if (selectedIndex < 0 || selectedIndex >= deckFiles.size()) {
+            mainWindow.showErrorDialog("Error", "Please select a deck.");
+            return;
+        }
+
+        try {
+            File selectedDeckFile = deckFiles.get(selectedIndex);
+            Deck deck = configManager.loadDeck(selectedDeckFile.getAbsolutePath());
+            mainWindow.startGame(deck, roundsSpinner.getValue());
+        } catch (Exception e) {
+            mainWindow.showErrorDialog("Failed to load deck", e.getMessage());
+        }
+    }
+
+    private Button createButton(String text, String color) {
+        Button button = new Button(text);
+        button.setStyle(createPrimaryButtonStyle(color));
+        return button;
+    }
+
+    private String createPanelStyle(String background) {
+        return "-fx-background-color: " + background + ";" +
+            "-fx-background-radius: 24;" +
+            "-fx-border-radius: 24;" +
+            "-fx-border-color: rgba(29,42,68,0.08);" +
+            "-fx-effect: dropshadow(gaussian, rgba(22,33,58,0.10), 24, 0.18, 0, 8);";
+    }
+
+    private String createInsetCardStyle() {
+        return "-fx-background-color: rgba(255,255,255,0.78);" +
+            "-fx-background-radius: 18;" +
+            "-fx-border-radius: 18;" +
+            "-fx-border-color: rgba(36,50,74,0.08);";
+    }
+
+    private String createPrimaryButtonStyle(String color) {
+        return "-fx-background-color: " + color + ";" +
+            "-fx-text-fill: white;" +
+            "-fx-font-size: 15;" +
+            "-fx-font-weight: bold;" +
+            "-fx-padding: 14 28;" +
+            "-fx-background-radius: 14;" +
+            "-fx-border-radius: 14;" +
+            "-fx-cursor: hand;";
+    }
+
+    private String createSecondaryButtonStyle() {
+        return "-fx-background-color: white;" +
+            "-fx-text-fill: #31415f;" +
+            "-fx-font-size: 14;" +
+            "-fx-font-weight: bold;" +
+            "-fx-padding: 13 24;" +
+            "-fx-background-radius: 14;" +
+            "-fx-border-radius: 14;" +
+            "-fx-border-color: #d8deea;" +
+            "-fx-cursor: hand;";
+    }
+
+    public Scene getScene() {
+        return scene;
+    }
+}

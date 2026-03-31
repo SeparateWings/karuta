@@ -1,0 +1,10 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Karuta Jukebox" type="Application" factoryName="Application">
+    <option name="MAIN_CLASS_NAME" value="ui.MainWindow" />
+    <option name="VM_PARAMETERS" value="--enable-native-access=ALL-UNNAMED" />
+    <module name="karuta-jukebox" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>
