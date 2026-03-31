@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # karuta
 A karuta music player
 =======
