@@ -10,11 +10,19 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.URISyntaxException;
+import java.net.JarURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 
 /**
  * 加载项目配置，并将数据集 CSV 转换为领域对象。
@@ -65,16 +73,152 @@ public class ConfigManager {
             return sourceResourcesPath.getCanonicalFile();
         }
 
+        File codeSourceDirectory = resolveFromCodeSource(requestedBaseDir);
+        if (codeSourceDirectory != null) {
+            return codeSourceDirectory.getCanonicalFile();
+        }
+
         ClassLoader classLoader = ConfigManager.class.getClassLoader();
-        if (classLoader.getResource(requestedBaseDir) != null) {
+        File bundledDirectory = resolveBundledConfigDirectory(classLoader, requestedBaseDir);
+        if (bundledDirectory != null) {
+            return bundledDirectory.getCanonicalFile();
+        }
+
+        throw new FileNotFoundException("Config directory not found: " + requestedBaseDir);
+    }
+
+    /**
+     * 优先查找 jar 或应用程序所在目录旁边的 config 目录，适配 jpackage 安装包。
+     */
+    private File resolveFromCodeSource(String requestedBaseDir) throws IOException {
+        try {
+            URL codeSourceUrl = ConfigManager.class.getProtectionDomain().getCodeSource().getLocation();
+            if (codeSourceUrl == null) {
+                return null;
+            }
+
+            File codeSource = new File(codeSourceUrl.toURI());
+            File rootDirectory = codeSource.isFile() ? codeSource.getParentFile() : codeSource;
+            if (rootDirectory == null) {
+                return null;
+            }
+
+            File siblingConfig = new File(rootDirectory, requestedBaseDir);
+            if (containsConfigFile(siblingConfig)) {
+                return siblingConfig;
+            }
+
+            if (requestedBaseDir.startsWith("config/")) {
+                File nestedConfig = new File(rootDirectory, requestedBaseDir);
+                if (nestedConfig.isDirectory()) {
+                    return nestedConfig;
+                }
+            }
+
+            File directConfigFile = new File(rootDirectory, CONFIG_FILE);
+            if (directConfigFile.isFile()) {
+                return directConfigFile.getParentFile();
+            }
+
+            return null;
+        } catch (URISyntaxException e) {
+            throw new IOException("Failed to resolve config from code source.", e);
+        }
+    }
+
+    /**
+     * 尝试从 classpath 中解析配置目录，支持目录资源和单个 config.txt 文件资源。
+     */
+    private File resolveBundledConfigDirectory(ClassLoader classLoader, String requestedBaseDir) throws IOException {
+        for (String resourceName : buildResourceCandidates(requestedBaseDir)) {
+            URL resourceUrl = classLoader.getResource(resourceName);
+            if (resourceUrl == null) {
+                continue;
+            }
+
             try {
-                return new File(classLoader.getResource(requestedBaseDir).toURI()).getCanonicalFile();
+                if ("file".equals(resourceUrl.getProtocol())) {
+                    File resourceFile = new File(resourceUrl.toURI());
+                    if (resourceFile.isDirectory()) {
+                        return resourceFile;
+                    }
+
+                    if (CONFIG_FILE.equals(resourceFile.getName())) {
+                        return resourceFile.getParentFile();
+                    }
+                }
+
+                if ("jar".equals(resourceUrl.getProtocol())) {
+                    return extractBundledDirectory(resourceUrl, resourceName);
+                }
             } catch (Exception e) {
                 throw new IOException("Failed to resolve config directory: " + requestedBaseDir, e);
             }
         }
 
-        throw new FileNotFoundException("Config directory not found: " + requestedBaseDir);
+        return null;
+    }
+
+    /**
+     * 生成 classpath 的候选资源名，兼容目录和 config.txt 两种布局。
+     */
+    private List<String> buildResourceCandidates(String requestedBaseDir) {
+        List<String> candidates = new ArrayList<>();
+        String normalizedBaseDir = requestedBaseDir.replace('\\', '/');
+
+        if (!normalizedBaseDir.isEmpty()) {
+            candidates.add(normalizedBaseDir);
+            if (!normalizedBaseDir.endsWith("/")) {
+                candidates.add(normalizedBaseDir + "/");
+            }
+            candidates.add(normalizedBaseDir + "/" + CONFIG_FILE);
+        }
+
+        candidates.add(CONFIG_FILE);
+        candidates.add("config/" + CONFIG_FILE);
+        return candidates;
+    }
+
+    /**
+     * 将 jar 内的配置资源抽取到临时目录，便于后续继续使用文件系统访问。
+     */
+    private File extractBundledDirectory(URL resourceUrl, String resourceName) throws IOException {
+        JarURLConnection jarConnection = (JarURLConnection) resourceUrl.openConnection();
+        try (JarFile jarFile = jarConnection.getJarFile()) {
+            Path tempDirectory = Files.createTempDirectory("karuta-config-");
+            String entryPrefix;
+
+            if (resourceName.endsWith(CONFIG_FILE)) {
+                entryPrefix = resourceName.substring(0, resourceName.length() - CONFIG_FILE.length());
+            } else {
+                entryPrefix = resourceName.endsWith("/") ? resourceName : resourceName + "/";
+            }
+
+            jarFile.stream()
+                    .filter(entry -> !entry.isDirectory() && entry.getName().startsWith(entryPrefix))
+                    .forEach(entry -> copyJarEntry(jarFile, entry, tempDirectory, entryPrefix));
+
+            return tempDirectory.toFile();
+        }
+    }
+
+    /**
+     * 复制单个 jar 条目到临时配置目录。
+     */
+    private void copyJarEntry(JarFile jarFile, JarEntry entry, Path tempDirectory, String entryPrefix) {
+        Path targetFile = tempDirectory.resolve(entry.getName().substring(entryPrefix.length()));
+        try {
+            Path parent = targetFile.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+
+            try (var inputStream = jarFile.getInputStream(entry)) {
+                Files.copy(inputStream, targetFile, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to extract config resource: " + entry.getName(), e);
+        }
     }
 
     /**
@@ -94,7 +238,7 @@ public class ConfigManager {
         }
 
         try (BufferedReader reader = new BufferedReader(
-            new InputStreamReader(new FileInputStream(configFile), StandardCharsets.UTF_8))) {
+                new InputStreamReader(new FileInputStream(configFile), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
@@ -124,8 +268,7 @@ public class ConfigManager {
 
         if (minDuration <= 0 || maxDuration <= 0 || minDuration > maxDuration) {
             throw new IllegalArgumentException(
-                String.format("Invalid duration config: min=%d, max=%d", minDuration, maxDuration)
-            );
+                    String.format("Invalid duration config: min=%d, max=%d", minDuration, maxDuration));
         }
     }
 
@@ -163,7 +306,7 @@ public class ConfigManager {
         Deck deck = new Deck(deckName, deckFilePath);
 
         try (BufferedReader reader = new BufferedReader(
-            new InputStreamReader(new FileInputStream(deckFile), StandardCharsets.UTF_8))) {
+                new InputStreamReader(new FileInputStream(deckFile), StandardCharsets.UTF_8))) {
             String line;
             boolean isHeader = true;
 
@@ -271,7 +414,7 @@ public class ConfigManager {
     }
 
     public String[] getSupportedFormats() {
-        return new String[]{"mp3", "wav", "m4a", "aif", "aiff"};
+        return new String[] { "mp3", "wav", "m4a", "aif", "aiff" };
     }
 
     public String getMusicFolder() {
