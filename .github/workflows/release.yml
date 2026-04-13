@@ -32,24 +32,43 @@ jobs:
       - name: Build JAR
         run: mvn -B clean package
 
-      - name: Stage config directory
+      - name: Stage jpackage input
         run: |
-          rm -rf target/config
-          cp -R src/main/resources/config target/config
+          VERSION="${{ steps.version.outputs.version }}"
+
+          rm -rf target/staging
+          mkdir -p target/staging
+
+          # Thin application jar
+          cp "target/karuta-jukebox-${VERSION}.jar" target/staging/
+
+          # Runtime dependency jars (JavaFX platform-specific jars, etc.)
+          cp target/lib/*.jar target/staging/
+
+          # Config directory (template config.txt; music/images/decks are user data)
+          cp -R src/main/resources/config target/staging/config
+
+          echo "=== Staging directory contents ==="
+          find target/staging -type f
+          echo "=== Total staging size ==="
+          du -sh target/staging
 
       - name: Create dmg
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
           rm -rf target/package
           mkdir -p target/package
           jpackage \
             --type dmg \
-            --input target \
-            --main-jar karuta-jukebox-${{ steps.version.outputs.version }}.jar \
+            --input target/staging \
+            --main-jar "karuta-jukebox-${VERSION}.jar" \
             --main-class ui.Launcher \
+            --module-path target/staging \
+            --add-modules javafx.controls,javafx.fxml,javafx.media,java.desktop \
             --name KarutaJukebox \
-            --app-version ${{ steps.version.outputs.version }} \
+            --app-version "${VERSION}" \
             --dest target/package \
-            --java-options --enable-native-access=ALL-UNNAMED
+            --java-options "--enable-native-access=ALL-UNNAMED"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
@@ -76,14 +95,8 @@ jobs:
         id: version
         shell: powershell
         run: |
-          $pomContent = Get-Content pom.xml -Raw
-          $versionMatch = [regex]::Match($pomContent, '<artifactId>karuta-jukebox</artifactId>\s*<version>([^<]+)</version>')
-          $version = $versionMatch.Groups[1].Value.Trim()
-          if ([string]::IsNullOrWhiteSpace($version)) {
-            throw "Failed to resolve project version."
-          }
-
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $v = mvn -q -DforceStdout help:evaluate "-Dexpression=project.version"
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Install WiX Toolset
         shell: powershell
@@ -115,30 +128,46 @@ jobs:
         shell: powershell
         run: mvn -B clean package
 
-      - name: Stage config directory
+      - name: Stage jpackage input
         shell: powershell
         run: |
-          if (Test-Path target/config) {
-            Remove-Item -Recurse -Force target/config
-          }
-          Copy-Item -Recurse src/main/resources/config target/config
+          $v = "${{ steps.version.outputs.version }}"
+
+          # Create a clean staging directory — ONLY what jpackage needs
+          $stage = "target/staging"
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Force $stage | Out-Null
+
+          # Thin application jar
+          Copy-Item "target/karuta-jukebox-$v.jar" "$stage/"
+
+          # Runtime dependency jars (JavaFX platform-specific jars, etc.)
+          Copy-Item "target/lib/*.jar" "$stage/"
+
+          # Config directory (template config.txt; music/images/decks are user data)
+          Copy-Item -Recurse "src/main/resources/config" "$stage/config"
+
+          # Verify staging contents
+          Write-Host "=== Staging directory contents ==="
+          Get-ChildItem -Recurse $stage | Format-Table FullName, Length
 
       - name: Create exe
         shell: powershell
         run: |
-          if (Test-Path target/package) {
-            Remove-Item -Recurse -Force target/package
-          }
+          $v = "${{ steps.version.outputs.version }}"
+          if (Test-Path target/package) { Remove-Item -Recurse -Force target/package }
           New-Item -ItemType Directory -Force target/package | Out-Null
           jpackage `
             --type exe `
-            --input target `
-            --main-jar karuta-jukebox-${{ steps.version.outputs.version }}.jar `
+            --input target/staging `
+            --main-jar "karuta-jukebox-$v.jar" `
             --main-class ui.Launcher `
+            --module-path target/staging `
+            --add-modules javafx.controls,javafx.fxml,javafx.media,java.desktop `
             --name KarutaJukebox `
-            --app-version ${{ steps.version.outputs.version }} `
+            --app-version $v `
             --dest target/package `
-            --java-options --enable-native-access=ALL-UNNAMED
+            --java-options "--enable-native-access=ALL-UNNAMED"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
