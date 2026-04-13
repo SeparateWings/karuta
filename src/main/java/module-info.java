@@ -4,6 +4,7 @@
 module karuta.jukebox {
     requires java.desktop;
     requires transitive javafx.controls;
+    requires javafx.fxml;
     requires javafx.media;
 
     exports audio;
@@ -11,4 +12,6 @@ module karuta.jukebox {
     exports game;
     exports model;
     exports ui;
+
+    opens ui to javafx.fxml;
 }

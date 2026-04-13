@@ -1,5 +1,36 @@
-*.jar
+# Build output
 target/
+dependency-reduced-pom.xml
+
+# IDE / AI tools
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+*.code-workspace
+nbproject/
+.claude/
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+ehthumbs_vista.db
+$RECYCLE.BIN/
+*.lnk
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.AppleDouble
+.LSOverride
+Icon?
+
+# Java / Maven
+*.jar
+*.class
 *.log
 hs_err_pid*.log
-dependency-reduced-pom.xml

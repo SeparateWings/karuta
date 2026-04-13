@@ -65,6 +65,11 @@ public class ConfigManager {
             return sourceResourcesPath.getCanonicalFile();
         }
 
+        File jpackageAppDir = resolveFromJpackageAppDir(requestedBaseDir);
+        if (jpackageAppDir != null) {
+            return jpackageAppDir.getCanonicalFile();
+        }
+
         if (directPath.isDirectory()) {
             return directPath.getCanonicalFile();
         }
@@ -84,7 +89,85 @@ public class ConfigManager {
             return bundledDirectory.getCanonicalFile();
         }
 
-        throw new FileNotFoundException("Config directory not found: " + requestedBaseDir);
+        throw new FileNotFoundException(
+                "Config directory not found: " + requestedBaseDir
+                + " (CWD=" + new File(".").getAbsolutePath()
+                + ", code-source=" + getCodeSourcePath() + ")");
+    }
+
+    /**
+     * jpackage 安装时，配置目录位于应用 JAR 所在的 app/ 目录内。
+     * <p>
+     * jpackage 启动器设置系统属性 {@code jpackage.app-path} 指向可执行文件路径，
+     * 其同级 {@code app/} 子目录包含所有通过 {@code --input} 打包的文件。
+     * 同时也通过代码源位置做回退检查。
+     */
+    private File resolveFromJpackageAppDir(String requestedBaseDir) {
+        File candidate = resolveViaJpackageProperty(requestedBaseDir);
+        if (candidate != null) {
+            return candidate;
+        }
+
+        return resolveViaCodeSourceParent(requestedBaseDir);
+    }
+
+    private File resolveViaJpackageProperty(String requestedBaseDir) {
+        String appPath = System.getProperty("jpackage.app-path");
+        if (appPath == null) {
+            return null;
+        }
+
+        File appExe = new File(appPath);
+        File installDir = appExe.getParentFile();
+        if (installDir == null) {
+            return null;
+        }
+
+        File appDir = new File(installDir, "app");
+        File candidate = new File(appDir, requestedBaseDir);
+        if (containsConfigFile(candidate)) {
+            return candidate;
+        }
+
+        return null;
+    }
+
+    private File resolveViaCodeSourceParent(String requestedBaseDir) {
+        try {
+            URL codeSourceUrl = ConfigManager.class.getProtectionDomain()
+                    .getCodeSource().getLocation();
+            if (codeSourceUrl == null) {
+                return null;
+            }
+
+            File codeSource = new File(codeSourceUrl.toURI());
+            File appDir = codeSource.isFile() ? codeSource.getParentFile() : codeSource;
+            if (appDir == null) {
+                return null;
+            }
+
+            File candidate = new File(appDir, requestedBaseDir);
+            if (containsConfigFile(candidate)) {
+                return candidate;
+            }
+        } catch (Exception ignored) {
+            // Fall through to other strategies
+        }
+
+        return null;
+    }
+
+    /**
+     * 用于诊断日志的辅助方法，返回代码源路径。
+     */
+    private String getCodeSourcePath() {
+        try {
+            URL url = ConfigManager.class.getProtectionDomain()
+                    .getCodeSource().getLocation();
+            return url != null ? url.toString() : "null";
+        } catch (Exception e) {
+            return "error: " + e.getMessage();
+        }
     }
 
     /**
